@@ -15,13 +15,13 @@ Object.observe(io.sockets.adapter.rooms, (changes) => {
   if (changes[0].type == 'add' && /^game.+/.test(changes[0].name)) {
     console.log(`${changes[0].name} has been started`);
     // уведомляем о создании новой комнаты
-    io.sockets.in('roomsWatchers').emit('roomsList', getExtandRoomsList());
+    io.sockets.in('roomsWatchers').emit('roomsList', getExtendedRoomsList());
     let newRoom = io.sockets.adapter.rooms[changes[0].name];
 
     // вешаем обработчик оповещения на случай измения кол-ва людей в комнате
     Object.observe(newRoom, (changes) => {
       if (changes[0].type == 'update')
-        io.sockets.in('roomsWatchers').emit('roomsList', getExtandRoomsList());
+        io.sockets.in('roomsWatchers').emit('roomsList', getExtendedRoomsList());
     });
   }
 });
@@ -45,25 +45,28 @@ Array.observe(waitQueue, (changes) => {
       });
 
       // пробрасываем ходы игроков
-      let turnTypes = ['move', 'promotion', 'castling'];
-      turnTypes.forEach( (turnType) => {
+      ['move', 'promotion', 'castling', 'mate', 'drow'].forEach( (turnType) => {
         player.on(`turn_${turnType}`, (eventArgs) => {
           eventArgs = eventArgs || {};
           eventArgs.playerColor = playerColor;
-          io.sockets.in(roomID).emit(`player_${turnType}`, eventArgs);
+          player.broadcast.to(roomID).emit(`player_${turnType}`, eventArgs);
         });
-      })
+      });
 
       // заканчиваем игру, если один из игроков вышел
-      player.on('room_leave', () => { // TODO: проверить что будет при дисконнекте
-        player.leave(roomID);
-        console.log(`${player.id} has leaved from ${roomID}`.red);
-        io.sockets.in(roomID).emit('game_end', {
-          msg: 'leave',
-          winnerColor: playerColor == 'white' ? 'black' : 'white'
+      ['room_leave', 'disconnect'].forEach( (event) => {
+        player.on( event, () => {
+          player.leave(roomID);
+          console.log(`${player.id} has leaved from ${roomID}`.red);
+          io.sockets.in(roomID).emit('game_end', {
+            msg: 'leave',
+            winnerColor: playerColor == 'white' ? 'black' : 'white'
+          });
+          io.sockets.in(roomID).removeAllListeners('room_leave');
+
+          // убираем всех людей из комнаты игры, тем самым закрывая ее
+          Object.keys( io.sockets.in(roomID).sockets).forEach( (socketID) => io.sockets.connected[socketID].leave(roomID) );
         });
-        io.sockets.in(roomID).removeAllListeners('room_leave');
-        io.sockets.in(roomID).leave(roomID);
       });
     });
     console.log(` in wait: ${waitQueue.length}`.gray);
@@ -83,7 +86,7 @@ io.sockets.on('connection', (socket) => {
   // подписка на изменение списка комнат
   socket.on('roomsList_subscribe', () => {
     // отправка текущего состояния вновь прибывшему
-    socket.emit('roomsList', getExtandRoomsList());
+    socket.emit('roomsList', getExtendedRoomsList());
     socket.join('roomsWatchers');
 
     // отписка от изменений списка комнат
@@ -99,10 +102,12 @@ io.sockets.on('connection', (socket) => {
     waitQueue.push(socket);
     socket.removeAllListeners('game_find');
 
-    socket.on('game_stopFinding', () => {
-      waitQueue.splice(waitQueue.indexOf(socket), 1);
-      socket.removeAllListeners('game_stopFinding');
-      socket.on('game_find', onGameFind);
+    ['game_stopFinding', 'disconnect'].forEach ((event) => {
+      socket.on( event, () => {
+        waitQueue.splice(waitQueue.indexOf(socket), 1);
+        socket.removeAllListeners('game_stopFinding');
+        socket.on('game_find', onGameFind);
+      });
     });
   }
 
@@ -115,14 +120,14 @@ io.sockets.on('connection', (socket) => {
         socket.removeAllListeners('room_leave');
       });
     }
-  })
+  });
 });
 
 function getRoomsList() {
   return Object.keys(io.sockets.adapter.rooms).filter( (roomID) => /^game.+/.test(roomID) );
 }
 
-function getExtandRoomsList() {
+function getExtendedRoomsList() {
   return getRoomsList().map( (roomID) => {
     return {
       roomID: roomID,
