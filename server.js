@@ -35,7 +35,9 @@ Array.observe(waitQueue, (changes) => {
     let roomID = `game${gameCounter++}`,
         whiteNumber = Math.floor( Math.random() );
 
-    waitQueue.splice(0,2).forEach( (player, index) => {
+    let players = waitQueue.splice(0,2);
+
+    players.forEach( (player, index) => {
 
       player.join(roomID);
       let playerColor = index == whiteNumber ? 'white' : 'black';
@@ -44,18 +46,9 @@ Array.observe(waitQueue, (changes) => {
         color: playerColor
       });
 
-      // пробрасываем ходы игроков
-      ['move', 'promotion', 'castling', 'mate', 'drow'].forEach( (turnType) => {
-        player.on(`turn_${turnType}`, (eventArgs) => {
-          eventArgs = eventArgs || {};
-          eventArgs.playerColor = playerColor;
-          player.broadcast.to(roomID).emit(`player_${turnType}`, eventArgs);
-        });
-      });
-
       // заканчиваем игру, если один из игроков вышел
-      ['room_leave', 'disconnect'].forEach( (event) => {
-        player.on( event, () => {
+      ['room_leave', 'disconnect'].forEach( (eventType) => {
+        player.on( eventType, () => {
           player.leave(roomID);
           console.log(`${player.id} has leaved from ${roomID}`.red);
           io.sockets.in(roomID).emit('game_end', {
@@ -69,6 +62,28 @@ Array.observe(waitQueue, (changes) => {
         });
       });
     });
+
+    let waitTurn = (playerNumber) => {
+      let player = players[playerNumber],
+          turnTypes =['move', 'promotion', 'castling', 'mate', 'drow'];
+
+      turnTypes.forEach( (turnType) => {
+        player.on(`turn_${turnType}`, (eventArgs) => {
+          eventArgs = eventArgs || {};
+          eventArgs.playerColor = playerNumber == whiteNumber ? 'white' : 'black';
+          player.broadcast.to(roomID).emit(`player_${turnType}`, eventArgs);
+
+          turnTypes.forEach( (turnType) => {
+            player.removeAllListeners(`turn_${turnType}`);
+          })
+
+          waitTurn(playerNumber == 1 ? 0 : 1);
+        });
+      });
+    };
+
+    waitTurn(whiteNumber);
+
     console.log(` in wait: ${waitQueue.length}`.gray);
   }
 });
