@@ -7,8 +7,9 @@ var io     = require('socket.io').listen(PORT),
 
 console.log('Server started...'.gray);
 
-let waitQueue = [],
-    gameCounter = 1;
+let waitQueue = [];
+let gameCounter = 1;
+let turns = {};
 
 // следим за созданием игровых комнат
 Object.observe(io.sockets.adapter.rooms, (changes) => {
@@ -95,12 +96,15 @@ Array.observe(waitQueue, (changes) => {
 
           let anotherPlayerNumber = playerNumber == 1 ? 0 : 1;
 
-          console.log(turnType);
-
           if (turnType == 'mate' || turnType == 'draw')
             waitEndEvent(anotherPlayerNumber, turnType);
-          else
+          else {
+            if (!turns[roomID])
+              turns[roomID] = new Array();
+            turns[roomID].push({ type: turnType, eventArgs });
             waitTurn(anotherPlayerNumber);
+          }
+
         });
       });
     };
@@ -153,6 +157,7 @@ io.sockets.on('connection', (socket) => {
   socket.on('room_enter', (roomID) => {
     if( getRoomsList().find( (room) => room == roomID ) ) {
       socket.join(roomID);
+      socket.emit('game_logs', turns[roomID]);
       socket.on('room_leave', () => {
         socket.leave(roomID);
         socket.removeAllListeners('room_leave');
@@ -175,5 +180,6 @@ function getExtendedRoomsList() {
 }
 
 function closeRoom(roomID) {
+  delete turns[roomID];
   Object.keys( io.sockets.in(roomID).sockets).forEach( (socketID) => io.sockets.connected[socketID].leave(roomID) );
 }
