@@ -55,17 +55,33 @@ Array.observe(waitQueue, (changes) => {
             msg: 'leave',
             winnerColor: playerColor == 'white' ? 'black' : 'white'
           });
-          io.sockets.in(roomID).removeAllListeners('room_leave');
+          io.sockets.in(roomID).removeAllListeners('room_leave');   // TODO: нужно ли это ???
 
-          // убираем всех людей из комнаты игры, тем самым закрывая ее
-          Object.keys( io.sockets.in(roomID).sockets).forEach( (socketID) => io.sockets.connected[socketID].leave(roomID) );
+          closeRoom(roomID);
         });
       });
     });
 
+    let waitEndEvent = (playerNumber, type) => {
+      let player = players[playerNumber];
+
+      player.on(`turnValidation_${type}`, () => {
+        let winnerColor = type == 'draw'? null : playerNumber == whiteNumber ? 'white' : 'black';
+
+        io.to(roomID).emit(`game_end`, {
+          msg: type,
+          winnerColor: winnerColor
+        });
+
+        player.removeAllListeners(`turnValidation_${type}`);
+
+        closeRoom(roomID);
+      });
+    };
+
     let waitTurn = (playerNumber) => {
       let player = players[playerNumber],
-          turnTypes =['move', 'promotion', 'castling', 'mate', 'drow'];
+          turnTypes = ['move', 'promotion', 'castling', 'mate', 'draw'];
 
       turnTypes.forEach( (turnType) => {
         player.on(`turn_${turnType}`, (eventArgs) => {
@@ -75,9 +91,16 @@ Array.observe(waitQueue, (changes) => {
 
           turnTypes.forEach( (turnType) => {
             player.removeAllListeners(`turn_${turnType}`);
-          })
+          });
 
-          waitTurn(playerNumber == 1 ? 0 : 1);
+          let anotherPlayerNumber = playerNumber == 1 ? 0 : 1;
+
+          console.log(turnType);
+
+          if (turnType == 'mate' || turnType == 'draw')
+            waitEndEvent(anotherPlayerNumber, turnType);
+          else
+            waitTurn(anotherPlayerNumber);
         });
       });
     };
@@ -149,4 +172,8 @@ function getExtendedRoomsList() {
       length: io.sockets.adapter.rooms[roomID].length
     }
   });
+}
+
+function closeRoom(roomID) {
+  Object.keys( io.sockets.in(roomID).sockets).forEach( (socketID) => io.sockets.connected[socketID].leave(roomID) );
 }
